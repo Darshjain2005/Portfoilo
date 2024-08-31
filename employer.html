@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Employer Dashboard</title>
+    <link rel="stylesheet" href="employer.css">
+</head>
+<body>
+    <header>
+        <h1>Employer Dashboard</h1>
+        <button id="logout-button">Logout</button> 
+    </header>
+
+    <section id="search">
+        <h2>Search for Individuals</h2>
+        <form id="search-form">
+            <input type="text" id="search-skills" placeholder="Search by Skills" required>
+            <input type="text" id="search-certifications" placeholder="Search by Certifications" required>
+            <button type="submit">Search</button>
+        </form>
+        <div id="search-results"></div>
+    </section>
+
+    <script src="employer.js"></script>
+</body>
+</html>

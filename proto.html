@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Employer Dashboard</title>
+    <link rel="stylesheet" href="proto.css">
+</head>
+<body>
+    <header>
+        <h1>Employer Dashboard</h1>
+    </header>
+
+    <nav>
+        <ul>
+            <li><a href="#search">Search</a></li>
+            <li><a href="#profile">Profile</a></li>
+            <li><a href="#settings">Settings</a></li>
+            <li><a href="#logout">Logout</a></li>
+        </ul>
+    </nav>
+
+    <section id="search">
+        <h2>Search for Individuals</h2>
+        <button id="advanced-search-toggle">Advanced Search</button>
+        <form id="search-form">
+            <input type="text" id="search-skills" placeholder="Search by Skills" required>
+            <input type="text" id="search-certifications" placeholder="Search by Certifications" required>
+            <select id="search-location">
+                <option value="">Select Location</option>
+                <option value="new-york">New York</option>
+                <option value="los-angeles">Los Angeles</option>
+                <!-- Add more options as needed -->
+            </select>
+            <button type="submit">Search</button>
+        </form>
+        <div id="advanced-search" style="display:none;">
+            <!-- Advanced search fields go here -->
+            <input type="text" id="search-experience" placeholder="Search by Experience Level">
+            <input type="text" id="search-industry" placeholder="Search by Industry">
+        </div>
+        <div id="search-results"></div>
+        <div id="loading" style="display:none;">
+            <p>Loading...</p>
+        </div>
+    </section>
+
+    <section id="profile">
+        <h2>Profile</h2>
+        <p>View or update your profile details here.</p>
+        <!-- Add profile details or edit form here -->
+    </section>
+
+    <section id="settings">
+        <h2>Settings</h2>
+        <p>Manage your account settings here.</p>
+        <!-- Add settings form or options here -->
+    </section>
+
+    <footer>
+        <p>&copy; 2024 Your Company. All rights reserved.</p>
+    </footer>
+
+    <script src="proto.js"></script>
+</body>
+</html>

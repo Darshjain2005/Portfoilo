@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Employee Portfolio</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <header>
+        <h1>Employee Portfolio</h1>
+        <nav>
+            <ul>
+                <li><a href="#about">About Me</a></li>
+                <li><a href="#projects">Projects</a></li>
+                <li><a href="#certificates">Certificates</a></li>
+                <li><a href="#contact">Contact</a></li>
+                <li><a href="#resume">Resume</a></li>
+            </ul>
+        </nav>
+        <button id="logout-button">Logout</button> 
+    </header>
+    
+
+    <section id="about">
+        <h2>About Me</h2>
+        <form id="about-form">
+            <textarea id="about-input" placeholder="Write about yourself..."></textarea>
+            <button type="submit">Save About Me</button>
+        </form>
+        <div id="about-content"></div>
+    </section>
+
+    <section id="projects">
+        <h2>My Projects</h2>
+        <form id="project-form">
+            <input type="text" id="project-title" placeholder="Project Title" required>
+            <textarea id="project-description" placeholder="Project Description" required></textarea>
+            <button type="submit">Add Project</button>
+        </form>
+        <div id="projects-list"></div>
+    </section>
+
+    <section id="certificates">
+        <h2>Certificates</h2>
+        <form id="certificate-form">
+            <input type="text" id="certificate-title" placeholder="Certificate Title" required>
+            <input type="file" id="certificate-file" accept="image/*" required>
+            <button type="submit">Add Certificate</button>
+        </form>
+        <div id="certificates-list"></div>
+    </section>
+
+    <section id="contact">
+        <h2>Contact Me</h2>
+        <form id="contact-form">
+            <input type="email" id="contact-email" placeholder="Your Email" required>
+            <input type="text" id="contact-linkedin" placeholder="LinkedIn Profile" required>
+            <button type="submit">Save Contact Info</button>
+        </form>
+        <div id="contact-info"></div>
+    </section>
+
+    <section id="resume">
+        <h2>Download Resume</h2>
+        <form id="resume-form">
+            <input type="text" id="resume-name" placeholder="Your Name" required>
+            <input type="email" id="resume-email" placeholder="Your Email" required>
+            <textarea id="resume-experience" placeholder="Experience" required></textarea>
+            <textarea id="resume-education" placeholder="Education" required></textarea>
+            <textarea id="resume-skills" placeholder="Skills" required></textarea>
+            <button type="submit">Generate Resume</button>
+        </form>
+        <div id="resume-output"></div>
+    </section>
+
+    <script src="employee.js"></script>
+</body>
+</html>
