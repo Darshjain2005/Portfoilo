@@ -1,4 +1,6 @@
 const express = require('express');
+const http = require('http');
+const socketIo = require('socket.io');
 const mysql = require('mysql2');
 const bcrypt = require('bcryptjs');
 const bodyParser = require('body-parser');
@@ -9,22 +11,28 @@ const path = require('path');
 const PDFDocument = require('pdfkit');
 const fs = require('fs');
 require('dotenv').config();
-
+const async = require('async');
+const WebSocket = require('ws');
 const app = express();
-const port = 3001;
+const server = http.createServer(app); // Create HTTP server
 
 // Middleware
 app.use(cors({
-  origin: ['http://localhost:3001','http://127.0.0.1:8080'],
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+  origin: ["http://127.0.0.1:8080", "http://localhost:8080"],  // Match Socket.io origins
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+  credentials: true
 }));
 
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-app.options('*', cors());
+app.options('*', cors()); // Allow preflight requests
 
+/*
+this code create a folder called uploads in the root of the project
+and save the file in it.
+*/ 
 // Configure multer for file uploads
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
@@ -54,53 +62,71 @@ const db = mysql.createConnection({
 });
 
 db.connect((err) => {
-  if (err) throw err;
-  console.log('Connected to MySQL database.');
+  if (err) {
+    console.error('Database connection error:', err);
+  } else {
+    console.log('Connected to MySQL database.');
+  }
 });
 
+/*This code is a security check for protected routes in an Express app. */
+// Authentication Middleware
+const authenticateToken = (req, res, next) => {
+  const token = req.header('Authorization');
+  if (!token) return res.status(401).json({ message: 'Access Denied' });
 
-//search
-app.get('/get-profile/:employee_id', (req, res) => {
-  const { employee_id } = req.params;
+  jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
+    if (err) return res.status(403).json({ message: 'Invalid Token' });
+    req.user = user;
+    next();
+  });
+};
 
-  // Query for employee details
-  const userQuery = 'SELECT * FROM employees WHERE id = ?';
+/*this code will get profile that we have save and show it after we login
+It will show about me, project, recommandations and contact me section */
+// Get Profile Data with Recommendations
+app.get('/get-profile', (req, res) => {
+  const userId = req.query.user_id;
 
-  // Query for projects and certificates
-  const projectsQuery = 'SELECT * FROM projects WHERE employee_id = ?';
-  const certificatesQuery = 'SELECT * FROM certificates WHERE employee_id = ?';
+  if (!userId) {
+    return res.status(400).json({ error: "User ID is required" });
+  }
 
-  // Execute all queries in parallel
-  Promise.all([
-      new Promise((resolve, reject) => {
-          db.query(userQuery, [employee_id], (err, result) => {
-              if (err) reject(err);
-              else resolve(result[0]); // Assuming one employee per ID
-          });
-      }),
-      new Promise((resolve, reject) => {
-          db.query(projectsQuery, [employee_id], (err, result) => {
-              if (err) reject(err);
-              else resolve(result);
-          });
-      }),
-      new Promise((resolve, reject) => {
-          db.query(certificatesQuery, [employee_id], (err, result) => {
-              if (err) reject(err);
-              else resolve(result);
-          });
-      })
-  ])
-  .then(([user, projects, certificates]) => {
-      if (!user) {
-          return res.status(404).json({ message: "Employee not found" });
+  // Fetch profile, projects, contact, and recommendations
+  const query = `
+    SELECT a.about_me_text, 
+           p.title AS project_title, p.description AS project_description, 
+           c.contact_email, c.linkedin_profile
+    FROM about_me a
+    LEFT JOIN projects p ON a.user_id = p.employee_id
+    LEFT JOIN contact_me c ON a.user_id = c.user_id
+    WHERE a.user_id = ?;
+  `;
+
+  const recommendationsQuery = `
+    SELECT e.company_name AS employer_name, r.message AS recommendation_text, r.rating
+    FROM recommendations r
+    JOIN employers e ON r.employer_id = e.id
+    WHERE r.employee_id = ?;
+  `;
+
+  db.query(query, [userId], (err, profileResults) => {
+    if (err) {
+      console.error("Error fetching profile data:", err);
+      return res.status(500).json({ error: "Error fetching profile data" });
+    }
+
+    db.query(recommendationsQuery, [userId], (err, recommendationResults) => {
+      if (err) {
+        console.error("Error fetching recommendations:", err);
+        return res.status(500).json({ error: "Error fetching recommendations" });
       }
 
-      res.json({ user, projects, certificates });
-  })
-  .catch(err => {
-      console.error(err);
-      res.status(500).send('Server Error');
+      const profileData = profileResults.length > 0 ? profileResults[0] : {};
+      profileData.recommendations = recommendationResults; // Add recommendations
+
+      res.json(profileData);
+    });
   });
 });
 
@@ -108,68 +134,71 @@ app.get('/get-profile/:employee_id', (req, res) => {
 // Secret key for JWT
 const JWT_SECRET = process.env.JWT_SECRET;
 
-//create a employee account
+
+/*This endpoint is use to handle the backend of create employee account.
+It check if all the fields is full. Then it will check it the user name and password already there in the db.
+If not there in the database then it will insert it in the db.  */
+//create employee account
 app.post('/create-employee-account', (req, res) => {
-  console.log('Request body:', req.body);
+  console.log('Request received:', req.body);
 
-  const { full_name, email, username, password, confirmPassword } = req.body;
-
-  // Check if all required fields are present
-  if (!full_name || !email || !username || !password || !confirmPassword) {
+  const { fullname, email, username, password, confirmPassword } = req.body;
+  if (!fullname || !email || !username || !password || !confirmPassword) {
+      console.log('⚠️ Missing required fields');
       return res.status(400).json({ message: 'All fields are required.' });
   }
 
-  // Check if password and confirmPassword match
   if (password !== confirmPassword) {
+      console.log('⚠️ Passwords do not match');
       return res.status(400).json({ message: 'Passwords do not match.' });
   }
 
-  // Check if username or email already exists
   const checkSql = 'SELECT * FROM employees WHERE username = ? OR email = ?';
   db.query(checkSql, [username, email], (err, results) => {
       if (err) {
-          console.error('Error checking for existing user:', err);
+          console.error('⚠️ Error checking existing user:', err);
           return res.status(500).json({ message: 'Error checking for existing user.', error: err });
       }
 
       if (results.length > 0) {
-          return res.status(409).json({ message: 'Username or email already exists.' }); // Conflict
+          console.log('⚠️ Username or email already exists');
+          return res.status(409).json({ message: 'Username or email already exists.' });
       }
 
-      // Hash password and create account
       bcrypt.hash(password, 10, (err, hash) => {
           if (err) {
-              console.error('Error hashing password:', err);
+              console.error('⚠️ Error hashing password:', err);
               return res.status(500).json({ message: 'Error hashing password.', error: err });
           }
 
           const sql = 'INSERT INTO employees (full_name, email, username, password) VALUES (?, ?, ?, ?)';
-          db.query(sql, [full_name, email, username, hash], (err, result) => {
+          db.query(sql, [fullname, email, username, hash], (err, result) => {
               if (err) {
-                  console.error('Error creating account:', err);
+                  console.error('⚠️ Error creating account:', err);
                   return res.status(500).json({ message: 'Error creating account.', error: err });
               }
-              console.log('Employee account created:', result);
-              res.status(201).json({ message: 'Employee account created.' }); // Created
+              console.log('✅ Employee account created:', result);
+              res.status(201).json({ message: 'Employee account created.' });
           });
       });
   });
 });
 
+
+/*Similary to employee acc */
 // Create Employer Account Endpoint
-app.post('/create-employer-account', async (req, res) => {
-  const { company_name, email, username, password } = req.body; // ✅ Updated variable name
+app.post("/create-employer-account", async (req, res) => {
+  const { company_name, email, username, password } = req.body;
 
   if (!company_name || !email || !username || !password) {
       return res.status(400).json({ message: "All fields are required." });
   }
 
   try {
-      // Check if username or email already exists
       const checkQuery = "SELECT * FROM employers WHERE email = ? OR username = ?";
+
       db.query(checkQuery, [email, username], async (err, results) => {
           if (err) {
-              console.error("Database error:", err);
               return res.status(500).json({ message: "Server error" });
           }
 
@@ -177,31 +206,27 @@ app.post('/create-employer-account', async (req, res) => {
               return res.status(400).json({ message: "Email or Username already exists." });
           }
 
-          // Hash the password before storing
           const hashedPassword = await bcrypt.hash(password, 10);
 
-          // ✅ Fix the INSERT query to match your DB schema
-          const insertQuery = `
-              INSERT INTO employers (company_name, email, username, password) 
-              VALUES (?, ?, ?, ?)
-          `;
+          const insertQuery = "INSERT INTO employers (company_name, email, username, password) VALUES (?, ?, ?, ?)";
 
           db.query(insertQuery, [company_name, email, username, hashedPassword], (err, result) => {
               if (err) {
-                  console.error("Error inserting employer:", err);
                   return res.status(500).json({ message: "Error creating employer account" });
               }
 
               res.status(201).json({ message: "Employer account created successfully!" });
           });
       });
+
   } catch (error) {
-      console.error("Server error:", error);
       res.status(500).json({ message: "Internal Server Error" });
   }
 });
 
 
+/*For login this will check in the db where the username is ?(the id).
+If it matches in db it will open the employee page */
 // Employee Login
 app.post('/employee-login', (req, res) => {
   const { username, password } = req.body;
@@ -225,6 +250,7 @@ app.post('/employee-login', (req, res) => {
   });
 });
 
+/*Similary as employee login */
 //Employer login
 app.post('/employer-login', (req, res) => {
   const { username, password } = req.body;
@@ -249,36 +275,181 @@ app.post('/employer-login', (req, res) => {
 });
 
 
+// Create a WebSocket server
+const wss = new WebSocket.Server({ port: 3002 }); // Ensure the port is correct
 
-// Search for employers
-app.get('/search', (req, res) => {
-  const skills = req.query.skills; // Skills to search for
-  const certifications = req.query.certifications; // Certifications to search for
-  const fullName = req.query.name; // Name to search for (updated to full_name)
-  const linkedinProfile = req.query.contactInfo; // LinkedIn profile to search for (updated to linkedin_profile)
+// WebSocket chat logic (for real-time communication)
+// ✅ Handle WebSocket Connections
+wss.on('connection', (ws) => {
+  console.log("✅ New WebSocket Connection Established");
 
-  // SQL query to search employers with optional filtering based on skills and other criteria
-  const sql = `
-    SELECT e.*, GROUP_CONCAT(s.skill_name) AS skills
-    FROM employers e
-    LEFT JOIN employer_skills es ON e.id = es.employer_id
-    LEFT JOIN skills s ON es.skill_id = s.id
-    WHERE (s.skill_name LIKE ? OR s.skill_name IS NULL) 
-      AND e.certifications LIKE ? 
-      AND e.full_name LIKE ? 
-      AND e.linkedin_profile LIKE ?
-    GROUP BY e.id
-  `;
+  ws.on('message', (message) => {
+      try {
+          const data = JSON.parse(message);
 
-  // Execute the query with the provided parameters
-  db.query(sql, [`%${skills}%`, `%${certifications}%`, `%${fullName}%`, `%${linkedinProfile}%`], (err, results) => {
-    if (err) {
-      return res.status(500).send('Error searching for employers.'); // Handle any errors
-    }
-    res.json(results); // Return the search results as JSON
+          if (data.type === "chat_message") {
+              let { employerId, employeeId, sender, message } = data;
+
+              // ✅ Validate IDs
+              if (!employerId || !employeeId) {
+                  console.error("❌ Invalid chat message data: Missing employerId or employeeId", data);
+                  return;
+              }
+
+              // ✅ Convert IDs to integers
+              employerId = parseInt(employerId);
+              employeeId = parseInt(employeeId);
+
+              // ✅ Ensure valid sender
+              if (!["employer", "employee"].includes(sender)) {
+                  console.error("❌ Invalid sender type:", sender);
+                  return;
+              }
+
+              // ✅ Insert message into database
+              const query = `
+                  INSERT INTO messages (employer_id, employee_id, sender, message) 
+                  VALUES (?, ?, ?, ?)
+              `;
+              db.query(query, [employerId, employeeId, sender, message], (err, result) => {
+                  if (err) {
+                      console.error("❌ Error storing message:", err);
+                      return;
+                  }
+
+                  console.log("✅ Message Stored in DB:", result.insertId);
+
+                  // ✅ Broadcast message to all connected clients
+                  wss.clients.forEach(client => {
+                      if (client.readyState === WebSocket.OPEN) {
+                          client.send(JSON.stringify({
+                              type: "chat_message",
+                              sender: sender,
+                              employerId: employerId,
+                              employeeId: employeeId,
+                              message: message
+                          }));
+                      }
+                  });
+              });
+          }
+      } catch (err) {
+          console.error("❌ WebSocket Message Handling Error:", err);
+      }
+  });
+
+  ws.on('close', () => {
+      console.log("❌ WebSocket Disconnected");
   });
 });
 
+console.log("WebSocket server running on ws://localhost:3002");
+
+// Get chat messages between employer and employee
+app.get("/get-messages/:employerId/:employeeId", (req, res) => {
+  const { employerId, employeeId } = req.params;
+
+  const query = `
+      SELECT employer_id, employee_id, sender, message, timestamp 
+      FROM messages 
+      WHERE (employer_id = ? AND employee_id = ?)
+      ORDER BY timestamp ASC
+  `;
+
+  db.query(query, [employerId, employeeId], (err, results) => {
+      if (err) {
+          console.error("❌ Database error:", err);
+          return res.status(500).json({ error: "Database error", details: err.message });
+      }
+      res.json(results);
+  });
+});
+
+
+
+/*So here the employer rate the employee about it work.
+It will then store in the database and the will be fetch on employee page */
+//recommendation
+app.post('/add-recommendation', async (req, res) => {
+  const { employer_id, employee_id, message, rating } = req.body;
+
+  if (!employer_id || !employee_id || !message || !rating) {
+      return res.status(400).json({ message: "All fields are required." });
+  }
+
+  try {
+      const query = `INSERT INTO recommendations (employer_id, employee_id, message, rating) VALUES (?, ?, ?, ?)`;
+      db.query(query, [employer_id, employee_id, message, rating], (err, result) => {
+          if (err) {
+              console.error("Database error:", err);
+              return res.status(500).json({ message: "Error saving recommendation." });
+          }
+          res.status(201).json({ message: "Recommendation added successfully!" });
+      });
+  } catch (error) {
+      console.error("Server error:", error);
+      res.status(500).json({ message: "Internal Server Error" });
+  }
+});
+
+/*Here it will get the recommendation that is store in the database for the employee */
+//get recommendations
+app.get('/get-recommendations/:employee_id', (req, res) => {
+  const { employee_id } = req.params;
+  
+  const query = `SELECT employers.company_name, recommendations.message, recommendations.rating, recommendations.created_at 
+                 FROM recommendations 
+                 JOIN employers ON recommendations.employer_id = employers.id 
+                 WHERE recommendations.employee_id = ? 
+                 ORDER BY recommendations.created_at DESC`;
+  
+  db.query(query, [employee_id], (err, results) => {
+      if (err) {
+          console.error("Database error:", err);
+          return res.status(500).json({ message: "Error fetching recommendations." });
+      }
+      res.json(results);
+  });
+});
+
+/*Here it will search the employee based on the skills and certifications.
+We are using the filtering and matching algorithm for it.
+What it does is that it will filter the employee based on what the user have provied.
+It will search the db and will give the result */
+// Search for employees based on skills, certifications, and other filters
+app.get('/search-employees', (req, res) => {
+  const skills = req.query.skills || '';
+  const certifications = req.query.certifications || '';
+  const fullName = req.query.name || '';
+
+  const sql = `
+      SELECT e.id, e.full_name, 
+             COALESCE(GROUP_CONCAT(DISTINCT s.skill_name SEPARATOR ', '), '') AS skills, 
+             COALESCE(GROUP_CONCAT(DISTINCT c.certificate_name SEPARATOR ', '), '') AS certifications
+      FROM employees e
+      LEFT JOIN employee_skills es ON e.id = es.employee_id
+      LEFT JOIN skills s ON es.skill_id = s.id
+      LEFT JOIN certificates c ON e.id = c.employee_id  
+      WHERE (s.skill_name LIKE ? OR ? = '') 
+        AND (c.certificate_name LIKE ? OR ? = '') 
+        AND (e.full_name LIKE ? OR ? = '')
+      GROUP BY e.id
+  `;
+
+  db.query(sql, [
+      `%${skills}%`, skills || '',
+      `%${certifications}%`, certifications || '',
+      `%${fullName}%`, fullName || ''
+  ], (err, results) => {
+      if (err) {
+          console.error("Database error:", err);
+          return res.status(500).json({ message: 'Error searching for employees.', error: err.message });
+      }
+      res.json(results);
+  });
+});
+
+/*Here the employee give brief intro about himself */
 // Route to update About Me section
 app.post('/update-about-me', (req, res) => {
   const { user_id, about_me_text } = req.body;
@@ -320,20 +491,18 @@ app.post('/update-about-me', (req, res) => {
   });
 });
 
-// Create Skill
+/*Here the employee add the skills */
+// Create Skill (Ensures no duplicate skill entries)
 app.post('/add-skill', (req, res) => {
   const { skill_name } = req.body;
-  
+
   if (!skill_name) {
     return res.status(400).send({ message: 'Skill name is required.' });
   }
 
-  const sql = 'INSERT INTO skills (skill_name) VALUES (?)';
+  const sql = 'INSERT INTO skills (skill_name) VALUES (?) ON DUPLICATE KEY UPDATE id=LAST_INSERT_ID(id)';
   db.query(sql, [skill_name], (err, result) => {
     if (err) {
-      if (err.code === 'ER_DUP_ENTRY') {
-        return res.status(400).send({ message: 'Skill already exists.' });
-      }
       console.error('Error creating skill:', err);
       return res.status(500).send({ message: 'Error creating skill: ' + err.message });
     }
@@ -341,40 +510,110 @@ app.post('/add-skill', (req, res) => {
   });
 });
 
-// Link Skill to Employee
-app.post('/add-employee-skill', (req, res) => {
-  const { employee_id, skill_name } = req.body;
+// Get Skill ID by Name (Fetch skill ID if it exists)
+app.get('/get-skill-id', (req, res) => {
+  const skillName = req.query.skill_name;
 
-  if (!employee_id || !skill_name) {
-    return res.status(400).send({ message: 'Both employee_id and skill_name are required.' });
+  if (!skillName) {
+    return res.status(400).json({ message: 'Skill name is required.' });
   }
 
-  // Now link the employee to the skill in the employee_skills table
-    const insertSql = 'INSERT INTO employee_skills (employee_id, skill_id) VALUES (?, ?)';
-    db.query(insertSql, [employee_id, skill_id], (err, result) => {
-      if (err) {
-        if (err.code === 'ER_DUP_ENTRY') {
-          return res.status(200).send({ message: 'Employee skill already exists.' });
-        }
-        return res.status(500).send({ message: 'Error linking employee with skill.' });
-      }
-      res.status(200).send({ message: 'Employee skill linked successfully.' });
-    });
+  const sql = 'SELECT id FROM skills WHERE skill_name = ?';
+  db.query(sql, [skillName], (err, result) => {
+    if (err) {
+      console.error("Error fetching skill ID:", err);
+      return res.status(500).json({ message: 'Error fetching skill ID.' });
+    }
+
+    if (result.length === 0) {
+      return res.status(404).json({ message: 'Skill not found.' });
+    }
+
+    res.json({ id: result[0].id });
   });
+});
+
+// Add Multiple Skills and Link to Employee
+app.post('/add-employee-skills', async (req, res) => {
+  const { employee_id, skill_names } = req.body;
+
+  if (!employee_id || !skill_names || !Array.isArray(skill_names) || skill_names.length === 0) {
+    return res.status(400).json({ message: 'Employee ID and at least one skill name are required.' });
+  }
+
+  try {
+    let skillIds = [];
+
+    // Step 1: Fetch or Insert Skills
+    for (const skill_name of skill_names) {
+      let skillId;
+
+      // Check if skill already exists
+      const [existingSkill] = await new Promise((resolve, reject) => {
+        db.query('SELECT id FROM skills WHERE skill_name = ?', [skill_name], (err, result) => {
+          if (err) reject(err);
+          else resolve(result);
+        });
+      });
+
+      if (existingSkill) {
+        skillId = existingSkill.id;
+      } else {
+        // Insert new skill and retrieve the ID
+        const insertResult = await new Promise((resolve, reject) => {
+          db.query('INSERT INTO skills (skill_name) VALUES (?)', [skill_name], (err, result) => {
+            if (err) reject(err);
+            else resolve(result);
+          });
+        });
+
+        skillId = insertResult.insertId;
+      }
+
+      if (skillId) {
+        skillIds.push(skillId);
+      }
+    }
+
+    // Step 2: Link Employee to Skills
+    const values = skillIds.map(skillId => [employee_id, skillId]);
+    const employeeSkillQuery = 'INSERT IGNORE INTO employee_skills (employee_id, skill_id) VALUES ?';
+
+    await new Promise((resolve, reject) => {
+      db.query(employeeSkillQuery, [values], (err) => {
+        if (err) reject(err);
+        else resolve();
+      });
+    });
+
+    res.status(200).json({ message: 'Employee skills linked successfully.' });
+
+  } catch (error) {
+    console.error('Error processing skills:', error);
+    res.status(500).json({ message: 'Error linking employee with skills.' });
+  }
+});
+
 
 //Project
 app.post('/add-project', (req, res) => {
   const { employee_id, title, description } = req.body; 
 
+  if (!employee_id || !title || !description) {
+    return res.status(400).json({ message: "All fields are required." });
+  }
+
   const query = 'INSERT INTO projects (employee_id, title, description) VALUES (?, ?, ?)';
   db.query(query, [employee_id, title, description], (err, result) => {
-      if (err) {
-          console.error(err);
-          return res.status(500).send('Server Error');
-      }
-      res.send('Project added successfully.');
+    if (err) {
+      console.error("Database Error:", err);
+      return res.status(500).json({ message: "Server Error" });
+    }
+    res.status(201).json({ message: "Project added successfully!" });  // ✅ Return JSON response
   });
 });
+
+
 
 //Certificate
 app.post('/add-certificate', upload.single('certificate_file'), (req, res) => {
@@ -459,6 +698,52 @@ app.post('/update-contact', (req, res) => {
     res.status(500).json({ error: 'Error updating contact info' });
   }
 });
+
+/*Here if we want to change anything in about me,project and contact me we can update the profile from here */
+app.post('/update-profile', (req, res) => {
+  const { user_id, about_me_text, project_title, project_description, contact_email, contact_linkedin } = req.body;
+
+  if (!user_id) {
+    return res.status(400).json({ error: "User ID is required" });
+  }
+
+  // ✅ Update About Me
+  const updateAboutQuery = 'UPDATE about_me SET about_me_text = ? WHERE user_id = ?';
+  db.query(updateAboutQuery, [about_me_text, user_id], (err, result) => {
+    if (err) {
+      console.error("Database error:", err);
+      return res.status(500).json({ error: "Error updating About Me" });
+    }
+
+    // ✅ Insert Project (Only if project details exist)
+    if (project_title && project_description) {
+      const insertProjectQuery = 'INSERT INTO projects (employee_id, title, description) VALUES (?, ?, ?)';
+      db.query(insertProjectQuery, [user_id, project_title, project_description], (err, result) => {
+        if (err) {
+          console.error(err);
+          return res.status(500).json({ error: 'Error adding project' });
+        }
+      });
+    }
+
+    // ✅ Update Contact Info
+    const updateContactQuery = 'UPDATE contact_me SET contact_email = ?, linkedin_profile = ? WHERE user_id = ?';
+
+    // Ensure `contact_linkedin` is always a string (not null)
+    const safeContactLinkedIn = contact_linkedin || "";
+    
+    db.query(updateContactQuery, [contact_email, safeContactLinkedIn, user_id], (err, result) => {
+      if (err) {
+        console.error(err);
+        return res.status(500).json({ error: 'Error updating contact info' });
+      }
+    
+      // ✅ Send response after all queries complete
+      res.json({ message: 'Profile updated successfully' });
+    });
+  });
+});
+
 
 
 // Start server
