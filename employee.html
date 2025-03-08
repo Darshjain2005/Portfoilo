@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Employee Portfolio</title>
+    <link rel="stylesheet" href="styles.css">
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+</head>
+<body>
+    <header>
+        <h1>Employee Portfolio</h1>
+        <nav>
+            <ul>
+                <li><a href="#about">About Me</a></li>
+                <li><a href="#skills">Skills</a></li>
+                <li><a href="#projects">Projects</a></li>
+                <li><a href="#certificates">Certificates</a></li>
+                <li><a href="#recommendations">Recommendations</a></li>
+                <li><a href="#contact">Contact</a></li>
+                <li><a href="#resume">Resume</a></li>
+            </ul>
+        </nav>
+        <button id="logout-button">Logout</button>
+        <button id="chat-toggle">Chat</button> <!-- Chat Toggle Button -->
+    </header>
+
+    <section id="about">
+        <h2>About Me</h2>
+        <form id="about-me-form">
+            <textarea id="about-me" placeholder="Write about yourself..."></textarea>
+            <button type="submit">Save About Me</button>
+        </form>
+        <div id="about-content"></div>
+    </section>
+
+    <section id="skills">
+        <h2>Skills</h2>
+        <form id="skills-form"> 
+            <textarea id="skills-input" rows="3" placeholder="Add your skills one by one"></textarea>
+            <button type="submit">Add Skills</button>
+        </form>
+        <div id="skills-list"></div>
+    </section>
+
+    <section id="projects">
+        <h2>My Projects</h2>
+        <form id="project-form">
+            <input type="text" id="project-title" placeholder="Project Title" required>
+            <textarea id="project-description" placeholder="Project Description" required></textarea>
+            <button type="submit">Add Project</button>
+        </form>
+        <div id="projects-list"></div>
+    </section>
+
+    <section id="certificates">
+        <h2>Certificates</h2>
+        <form id="certificate-form" enctype="multipart/form-data">
+            <label for="certificate-title">Certificate Title</label>
+            <input type="text" id="certificate-title" required>
+            <label for="certificate-file">Upload Certificate</label>
+            <input type="file" id="certificate-file" accept="image/*,application/pdf" required>
+            <button type="submit">Add Certificate</button>
+        </form>
+        <div id="certificates-list"></div>
+    </section>
+
+    <section id="recommendations">
+        <h2>Recommendations</h2>
+        <div id="recommendationsList"></div>
+    </section>
+
+    <section id="contact">
+        <h2>Contact Me</h2>
+        <form id="contact-form">
+            <input type="email" id="contact-email" placeholder="Your Email" required>
+            <input type="text" id="contact-linkedin" placeholder="LinkedIn Profile" required>
+            <button type="submit">Save Contact Info</button>
+        </form>
+        <div id="contact-info"></div>
+    </section>
+
+<!-- Chat Toggle Button (Add this if missing) -->
+<button id="chat-toggle">Open Chat</button>
+
+<!-- Chat Container (Initially Hidden) -->
+<div id="chat-container" class="hidden">
+    <div id="chat-header">
+        <span>Chat</span>
+        <button id="close-chat">X</button>
+    </div>
+    <div id="chat-box"></div>
+    <input type="text" id="chat-input" placeholder="Type a message...">
+    <button id="send-message">Send</button>
+</div>
+
+<section class="profile-section">
+    <button id="save-profile-button" onclick="saveProfile()">Save Profile</button>
+</section>
+
+
+    <button class="resume-button" onclick="window.location.href='resume-builder.html'">Generate Resume</button>
+
+    <script src="employee.js"></script>
+    <script>
+document.addEventListener("DOMContentLoaded", () => {
+    console.log("✅ JavaScript Loaded!");
+
+    // ✅ Establish WebSocket connection (Ensure correct port)
+    const socket = new WebSocket("ws://localhost:3002");
+
+    // ✅ Get required chat elements
+    const chatContainer = document.getElementById("chat-container");
+    const chatToggle = document.getElementById("chat-toggle");
+    const closeChat = document.getElementById("close-chat");
+    const chatBox = document.getElementById("chat-box");
+    const chatInput = document.getElementById("chat-input");
+    const sendButton = document.getElementById("send-message");
+
+    if (!chatContainer || !chatToggle || !closeChat || !chatBox || !chatInput || !sendButton) {
+        console.error("❌ Chat elements not found in the DOM. Check your HTML.");
+        return;
+    }
+
+    // ✅ Get user authentication details
+    const token = localStorage.getItem("authToken");
+    const senderId = localStorage.getItem("user_id"); // Ensure this is set properly
+
+    // ✅ Authenticate WebSocket connection
+    socket.onopen = () => {
+        console.log("✅ WebSocket Connected!");
+        socket.send(JSON.stringify({ type: "authenticate", token }));
+    };
+
+    // ✅ Toggle Chat Box Visibility
+    chatToggle.addEventListener("click", () => {
+        chatContainer.classList.toggle("hidden");
+    });
+
+    closeChat.addEventListener("click", () => {
+        chatContainer.classList.add("hidden");
+    });
+
+    // ✅ Send chat messages
+    sendButton.addEventListener("click", sendMessage);
+    chatInput.addEventListener("keypress", (event) => {
+        if (event.key === "Enter") sendMessage();
+    });
+
+    function sendMessage() {
+        const message = chatInput.value.trim();
+        if (!message) return;
+
+        // ✅ Ensure receiver ID is set dynamically
+        let receiverId = chatBox.getAttribute("data-receiver-id");
+        if (!receiverId) {
+            console.error("❌ Receiver ID not found! Ensure chat is opened with a valid employer.");
+            return;
+        }
+
+        receiverId = parseInt(receiverId);
+        if (isNaN(receiverId)) {
+            console.error("❌ Invalid receiver ID.");
+            return;
+        }
+
+        // ✅ Send message through WebSocket
+        socket.send(
+            JSON.stringify({
+                type: "chat_message",
+                senderId: senderId,
+                receiverId: receiverId,
+                message: message,
+            })
+        );
+
+        // ✅ Update UI with sender's message
+        displayMessage("You", message, true);
+        chatInput.value = ""; // Clear input field
+    }
+
+    // ✅ Receive messages
+    socket.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+
+        if (data.type === "chat_message") {
+            const senderName = data.senderId === senderId ? "You" : `Employer ${data.senderId}`;
+            displayMessage(senderName, data.message, data.senderId === senderId);
+        }
+    };
+
+    // ✅ Function to display messages
+    function displayMessage(sender, message, isSender) {
+        const messageDiv = document.createElement("div");
+        messageDiv.textContent = `${sender}: ${message}`;
+        messageDiv.style.padding = "8px";
+        messageDiv.style.margin = "5px 0";
+        messageDiv.style.borderRadius = "8px";
+        messageDiv.style.backgroundColor = isSender ? "#d4edda" : "#f8d7da"; // Green for sender, Red for receiver
+        messageDiv.style.textAlign = isSender ? "right" : "left";
+
+        chatBox.appendChild(messageDiv);
+        chatBox.scrollTop = chatBox.scrollHeight;
+    }
+
+    // ✅ Handle WebSocket errors
+    socket.onerror = (error) => {
+        console.error("❌ WebSocket Error:", error);
+    };
+
+    socket.onclose = () => {
+        console.log("❌ WebSocket Disconnected.");
+    };
+});
+
+
+        </script>    
+</body>
+</html>
